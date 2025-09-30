@@ -1,21 +1,13 @@
+
+
 import streamlit as st
 import torch
 from torchvision import transforms, models
 from PIL import Image
 import torch.nn.functional as F
 import os
-import cv2
-import tempfile
-from collections import Counter
 
-# -------------------------------
-# Streamlit Page Config (Must be First)
-# -------------------------------
-st.set_page_config(page_title="🌿 Plant Disease Detector", layout="centered")
 
-# -------------------------------
-# Device and Model Setup
-# -------------------------------
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 num_classes = 28
 
@@ -35,9 +27,11 @@ diseased_keywords = [
     "blight", "rust", "scab", "spot", "mildew", "virus", "mold", "mites", "black_rot"
 ]
 
-weights_path = r"D:\demmo\plant\data\best_plantdoc_model.pth"
+# Path to local trained model
+weights_path = "data/best_plantdoc_model.pth"
 if not os.path.exists(weights_path):
     st.error(f"❌ Model weights not found at: {weights_path}")
+
 
 @st.cache_resource(show_spinner=False)
 def load_model():
@@ -50,128 +44,64 @@ def load_model():
 
 model = load_model()
 
+
 transform = transforms.Compose([
-    transforms.Resize((160, 160)),
+    transforms.Resize((160, 160)),  # smaller size for faster CPU inference
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406],
                          [0.229, 0.224, 0.225])
 ])
 
-# -------------------------------
-# Streamlit App Layout
-# -------------------------------
+
+st.set_page_config(page_title="🌿 Plant Disease Detector", layout="centered")
 st.title("🌿 Plant Disease Detector")
-st.write("Upload a **leaf image** or a **leaf video** for disease detection.")
+st.write("Upload a leaf image, or drag and drop it here:")
 
-# -------------------------------
-# Select Input Type
-# -------------------------------
-option = st.radio("Select input type:", ["Image", "Video"])
 
-# -------------------------------
-# Image Processing
-# -------------------------------
-if option == "Image":
-    uploaded_file = st.file_uploader(
-        "Choose a leaf image...",
-        type=["jpg", "jpeg", "png"]
-    )
+uploaded_file = st.file_uploader(
+    "Choose a leaf image...", 
+    type=["jpg", "jpeg", "png"], 
+    accept_multiple_files=False
+)
 
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, caption='Uploaded Leaf', use_container_width=True)
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption='Uploaded Leaf', use_column_width=True)
 
-        input_tensor = transform(image).unsqueeze(0).to(device)
+ 
+    input_tensor = transform(image).unsqueeze(0).to(device)
 
-        with torch.no_grad():
-            output = model(input_tensor)
-            probs = F.softmax(output, dim=1)
-            conf, pred = torch.max(probs, 1)
-            predicted_class = class_names[pred.item()]
-            confidence = conf.item() * 100
+    
+    with torch.no_grad():
+        output = model(input_tensor)
+        probs = F.softmax(output, dim=1)
+        conf, pred = torch.max(probs, 1)
+        predicted_class = class_names[pred.item()]
+        confidence = conf.item() * 100
 
-            top3_probs, top3_indices = torch.topk(probs, 3)
-            top3_classes = [class_names[i] for i in top3_indices[0]]
-            top3_conf = [p.item() * 100 for p in top3_probs[0]]
+      
+        top3_probs, top3_indices = torch.topk(probs, 3)
+        top3_classes = [class_names[i] for i in top3_indices[0]]
+        top3_conf = [p.item()*100 for p in top3_probs[0]]
 
-        st.subheader("🖼️ Image Prediction Result:")
-        st.write(f"**Leaf Class:** {predicted_class}")
-        st.write(f"**Confidence:** {confidence:.2f}%")
+   
+    st.subheader("Prediction Result:")
+    st.write(f"**Leaf Class:** {predicted_class}")
+    st.write(f"**Confidence:** {confidence:.2f}%")
 
-        if any(keyword in predicted_class.lower() for keyword in diseased_keywords):
-            st.warning("🌱⚠️ The leaf appears **unhealthy**")
-        else:
-            st.success("✅ The leaf appears **healthy**")
+    threshold = 50
+    if confidence < threshold:
+        st.warning(" Model confidence is low. Please try another image or inspect the leaf carefully.")
 
-        st.subheader("Top 3 Predictions (Image):")
-        for cls, conf in zip(top3_classes, top3_conf):
-            st.progress(int(conf))
-            st.write(f"{cls}: {conf:.2f}%")
+    if any(keyword.lower() in predicted_class.lower() for keyword in diseased_keywords):
+        st.warning(" The leaf appears **unhealthy**.")
+        st.info(" Tip: Inspect the plant closely and consider disease-specific treatments such as proper fungicides or pruning affected leaves.")
+    else:
+        st.success(" The leaf appears **healthy**.")
+        st.info(" Tip: Maintain regular irrigation, balanced fertilizers, and proper sunlight exposure.")
 
-# -------------------------------
-# Video Processing
-# -------------------------------
-if option == "Video":
-    uploaded_video = st.file_uploader(
-        "Choose a leaf video...",
-        type=["mp4", "avi", "mov"]
-    )
-
-    if uploaded_video is not None:
-        st.subheader("🎥 Video Prediction Result:")
-        tfile = tempfile.NamedTemporaryFile(delete=False)
-        tfile.write(uploaded_video.read())
-
-        cap = cv2.VideoCapture(tfile.name)
-        stframe = st.empty()
-        frame_count = 0
-        frame_predictions = []
-
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame_count += 1
-
-            if frame_count % 10 == 0:  # process every 10th frame
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(rgb_frame)
-                input_tensor = transform(pil_img).unsqueeze(0).to(device)
-
-                with torch.no_grad():
-                    output = model(input_tensor)
-                    probs = F.softmax(output, dim=1)
-                    conf, pred = torch.max(probs, 1)
-                    predicted_class = class_names[pred.item()]
-                    confidence = conf.item() * 100
-                    frame_predictions.append(predicted_class)
-
-                cv2.putText(frame, f"{predicted_class} ({confidence:.1f}%)",
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
-                            1, (0, 255, 0), 2)
-
-            stframe.image(frame, channels="BGR", use_container_width=True)
-
-        cap.release()
-        cv2.destroyAllWindows()
-
-        # Cleanup temp file safely
-        try:
-            os.remove(tfile.name)
-        except PermissionError:
-            pass
-
-        # -------------------------------
-        # Video Summary Result
-        # -------------------------------
-        if frame_predictions:
-            most_common = Counter(frame_predictions).most_common(1)[0]
-            final_class, count = most_common
-            st.subheader("📊 Video Summary Result:")
-            st.write(f"**Most Detected Class:** {final_class}")
-            st.write(f"**Appeared in {count} frames out of {len(frame_predictions)} processed frames**")
-
-            if any(keyword in final_class.lower() for keyword in diseased_keywords):
-                st.warning("🌱⚠️ Overall, the leaf appears **unhealthy**")
-            else:
-                st.success("✅ Overall, the leaf appears **healthy**")
+    # Top 3 Predictions with progress bars
+    st.subheader("Top 3 Predictions:")
+    for cls, conf in zip(top3_classes, top3_conf):
+        st.progress(int(conf))
+        st.write(f"{cls}: {conf:.2f}%")
