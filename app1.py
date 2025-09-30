@@ -35,7 +35,7 @@ diseased_keywords = [
     "blight", "rust", "scab", "spot", "mildew", "virus", "mold", "mites", "black_rot"
 ]
 
-weights_path = r"D:\demmo\plant\data\best_plantdoc_model.pth"
+weights_path = "data/best_plantdoc_model.pth"
 if not os.path.exists(weights_path):
     st.error(f"❌ Model weights not found at: {weights_path}")
 
